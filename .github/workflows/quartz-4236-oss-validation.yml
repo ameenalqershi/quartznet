@@ -1,0 +1,29 @@
+name: OSS Quartz 4236 cross-platform packaging validation
+on:
+  push:
+    branches:
+      - validation/issue-4236-ci
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  packaging:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.403
+      - name: Restore local tools
+        run: dotnet tool restore
+      - name: Release Pack (full solution)
+        run: dotnet fallout Pack --configuration Release
+      - name: Verify NuGet static assets and negative fixture
+        run: python .github/validation/check_static_assets.py
+      - name: Release unit suite
+        run: dotnet test --project src/Quartz.Tests.Unit/Quartz.Tests.Unit.csproj --configuration Release --no-restore --no-build --output Normal
