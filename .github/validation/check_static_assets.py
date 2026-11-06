@@ -23,27 +23,70 @@ def inspect(pkg):
         print(f"PASS {pkg.name}: {len(expected)} / {len(expected)} referenced assets")
         return expected
 
-def main():
+def assert_required_packages(folder):
+    selected = {}
     for name in ("Quartz.Dashboard", "Quartz.Dashboard.Host"):
-        pkgs = list(PACKAGE_DIR.glob(name + ".[0-9]*.nupkg"))
-        assert len(pkgs) == 1, (name, pkgs)
-        inspect(pkgs[0])
-    original = next(PACKAGE_DIR.glob("Quartz.Dashboard.[0-9]*.nupkg"))
+        matches = list(folder.glob(name + ".[0-9]*.nupkg"))
+        assert len(matches) == 1, f"expected exactly one {name} package; got {matches}"
+        inspect(matches[0])
+        selected[name] = matches[0]
+    return selected
+
+
+def require_rejected(label, package, expected_message):
+    try:
+        inspect(package)
+    except AssertionError as error:
+        assert expected_message in str(error), (label, str(error))
+        print(f"PASS negative fixture: {label} rejected")
+    else:
+        raise AssertionError(f"Malformed nupkg accepted: {label}")
+
+
+def main():
+    selected = assert_required_packages(PACKAGE_DIR)
+    original = selected["Quartz.Dashboard"]
     asset_to_drop = sorted(inspect(original))[0]
     with TemporaryDirectory() as tmp:
-        corrupt = Path(tmp) / original.name
-        with ZipFile(original) as src, ZipFile(corrupt, "w", ZIP_DEFLATED) as dst:
-            for entry in src.infolist():
-                if entry.filename != asset_to_drop:
-                    dst.writestr(entry, src.read(entry.filename))
+        tmp = Path(tmp)
+        variants = (
+            ("missing-asset", asset_to_drop, lambda entry, data: data),
+            ("missing-props", PROPS_PATH, lambda entry, data: data),
+            ("no-asset-references", None, lambda entry, data: data.replace(b"staticwebassets/", b"unrelatedassets/").replace(b"staticwebassets\\", b"unrelatedassets\\") if entry == PROPS_PATH else data),
+        )
+        for label, omitted_entry, transform in variants:
+            corrupt = tmp / (label + ".nupkg")
+            with ZipFile(original) as source, ZipFile(corrupt, "w", ZIP_DEFLATED) as target:
+                for entry in source.infolist():
+                    if entry.filename != omitted_entry:
+                        target.writestr(entry, transform(entry.filename, source.read(entry.filename)))
+            expected = asset_to_drop if label == "missing-asset" else "missing props file" if label == "missing-props" else "has only 0 asset references"
+            require_rejected(label, corrupt, expected)
+        # A missing Dashboard package must be rejected even when Host is intact.
+        missing_dashboard = tmp / "missing-dashboard"
+        missing_dashboard.mkdir()
+        host = selected["Quartz.Dashboard.Host"]
+        (missing_dashboard / host.name).write_bytes(host.read_bytes())
         try:
-            inspect(corrupt)
+            assert_required_packages(missing_dashboard)
         except AssertionError as error:
-            assert asset_to_drop in str(error), str(error)
-            print(f"PASS negative fixture: missing {asset_to_drop} detected")
+            assert "Quartz.Dashboard" in str(error), str(error)
+            print("PASS negative fixture: missing Dashboard package rejected")
         else:
-            raise AssertionError("Malformed nupkg was not rejected")
-    print("SUCCESS: package integrity validation")
+            raise AssertionError("Missing Dashboard package accepted")
+        # The same check must reject missing Host even if Dashboard is valid.
+        missing_host = tmp / "missing-host"
+        missing_host.mkdir()
+        (missing_host / original.name).write_bytes(original.read_bytes())
+        try:
+            assert_required_packages(missing_host)
+        except AssertionError as error:
+            assert "Quartz.Dashboard.Host" in str(error), str(error)
+            print("PASS negative fixture: missing Host package rejected")
+        else:
+            raise AssertionError("Missing Host package accepted")
+    print("SUCCESS: 1 positive + 5 negative package integrity fixtures")
+
 
 if __name__ == "__main__":
     main()
