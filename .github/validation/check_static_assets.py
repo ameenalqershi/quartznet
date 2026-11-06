@@ -25,10 +25,10 @@ def inspect(pkg):
 
 def main():
     for name in ("Quartz.Dashboard", "Quartz.Dashboard.Host"):
-        pkgs = list(PACKAGE_DIR.glob(name + ".*.nupkg"))
+        pkgs = list(PACKAGE_DIR.glob(name + ".[0-9]*.nupkg"))
         assert len(pkgs) == 1, (name, pkgs)
         inspect(pkgs[0])
-    original = next(PACKAGE_DIR.glob("Quartz.Dashboard.*.nupkg"))
+    original = next(PACKAGE_DIR.glob("Quartz.Dashboard.[0-9]*.nupkg"))
     asset_to_drop = sorted(inspect(original))[0]
     with TemporaryDirectory() as tmp:
         corrupt = Path(tmp) / original.name
